@@ -1,0 +1,162 @@
+<?php if ( ! defined('BASEPATH')) exit('No direct script access allowed');
+class Newmem_model extends CI_Model {
+    private $table="memberinfo";
+    private $stable='scoreOrder';
+    private $ctable='cashOrder';
+    public function __construct(){
+        parent::__construct();
+        $this->load->database('New_mem');
+        //$this->db=$this->load->database('New_mem');
+    }
+
+
+    public function checkMem($phone){
+        if(!isset($phone))$this->logmessage("未传入手机号");
+        $sql ='SELECT cardId FROM '.$this->table.' WHERE phone=? AND isbind=1';
+        $query=$this->db->query($sql,$phone);
+        if(!$query->num_rows()){
+            $ret['errcode']=0;
+            $ret['errmsg']="可以开卡";
+            $ret['data']="";
+        }else{
+            $ret['errcode']=3015130;
+            $ret['errmsg']="线下门店提示会员已经存在	";
+            $ret['data']="";
+        }
+        //$this->logmessage($query->num_rows());
+        return $ret;
+    }
+    public function regMem($info){
+       // $data=json_decode($info,TRUE);
+        if(!is_array($info))$this->logmessage("注册信息为空");
+        $formdata=array(
+            'wechat_id'=>$info['data']['openid'],
+            'name' =>$info['data']['name'],
+            'phone' =>$info['data']['mobile'],
+            'gender'=>$info['data']['gender'],
+            'pid'=>$info['data']['pid'],
+            'isbind'=>1
+        );
+        foreach($info['data']['field'] as $k=>$v){
+            $formdata['personId']=$v['value'];
+        }
+        $str=$this->db->insert_string($this->table,$formdata);
+        $this->db->query($str);
+        $this->logmessage($str);
+        $cardInfo = $this->getCardKey($info['data']['mobile']);
+        return $cardInfo;
+    }
+
+    public function checkCard($cardkey,$phone){
+        $sql='SELECT cardId FROM '.$this->table.' where cardId=? AND phone=? AND isbind=0';
+        $query=$this->db->query($sql,array($cardkey,$phone));
+        $result = $query->num_rows();
+        if($result==0){
+            $data=array(
+                "errcode" => 3015141,
+                "errmsg"=> "线下门店提示无法绑卡",
+                "data"=>""
+            );
+        }else{
+            $meminfo=$this->getCardKey($phone);
+            $formdata=array(
+                'cardId'=>$meminfo['cardId'],
+                'name' =>$meminfo['name'],
+                'mobile' =>$meminfo['phone'],
+                'gender'=>$meminfo['gender'],
+                'birthday'=>$meminfo['birthday'],
+                'score'=>$meminfo['amount'],
+                'cash'=>$meminfo['coin'],
+                'gradeId'=>$meminfo['grade'],
+                'storeId'=>$meminfo['store_id']
+            );
+            $data=array(
+                "errcode" => 0,
+                "errmsg"=> "可以绑卡	",
+                "data"=> $formdata
+            );
+        }
+        return $data;
+    }
+
+    public function changeScore($info){
+       $scoreinfo=array(
+           'cardId'=>intval($info['cardId']),
+           'from'=>intval($info['from']),
+           'scoreType'=>$info['scoreType'],
+           'store_id'=>$info['pid'],
+           'scoreValue'=>$info['score'],
+           'scoreTime'=>$info['scoreTime'],
+           'scoreSn'=>$info['scoreSn'],
+           'pid'=>$info['storeId']
+       );
+        switch($info['scoreType']){
+            case 'inc':$scoreinfo['scoreType']=1;break;
+            case 'dec':$scoreinfo['scoreType']=2;break;
+            case 'reset':$scoreinfo['scoreType']=3;break;
+        }
+        if($scoreinfo['scoreType']==1)$action = "amount=amount+".$scoreinfo['scoreValue'];
+        if($scoreinfo['scoreType']==2)$action = "amount=amount-".$scoreinfo['scoreValue'];
+        if($scoreinfo['scoreType']==3)$action = "amount=0";
+        $sql = 'UPDATE '.$this->table.' SET '.$action.' WHERE cardId='.$scoreinfo['cardId'];
+        $this->db->query($sql);
+        $str = $this->db->insert_string($this->stable, $scoreinfo);
+        $this->db->query($str);
+        $formdata=array(
+            'errcode'=>0,
+            'errmsg'=>"",
+            'data'=>array(
+                'scoreOrderId'=>$this->db->insert_id()
+            )
+        );
+        return $formdata;
+    }
+
+    public function changeCash($info){
+        $cashinfo=array(
+            'cardId'=>intval($info['cardId']),
+            'from'=>intval($info['from']),
+            'cashType'=>$info['cashType'],
+            'store_id'=>$info['pid'],
+            'cashValue'=>$info['cash'],
+            'cashTime'=>$info['cashTime'],
+            'cashSn'=>$info['cashSn'],
+            'pid'=>$info['storeId']
+        );
+        switch($info['cashType']){
+            case 'inc':$cashinfo['cashType']=1;break;
+            case 'dec':$cashinfo['cashType']=2;break;
+            case 'reset':$cashinfo['cashType']=3;break;
+        }
+        if($cashinfo['cashType']==1)$action = "coin=coin+".$cashinfo['cashValue'];
+        if($cashinfo['cashType']==2)$action = "coin=coin-".$cashinfo['cashValue'];
+        if($cashinfo['cashType']==3)$action = "coin=0";
+        $sql = 'UPDATE '.$this->table.' SET '.$action.' WHERE cardId='.$cashinfo['cardId'];
+        $this->db->query($sql);
+        $str = $this->db->insert_string($this->ctable, $cashinfo);
+        $this->db->query($str);
+        $formdata=array(
+            'errcode'=>0,
+            'errmsg'=>"",
+            'data'=>array(
+                'cashOrderId'=>$this->db->insert_id()
+            )
+        );
+        return $formdata;
+    }
+
+    public function getCardKey($mobile){
+        $sql ='SELECT cardId,name,phone,gender,birthday,coin,amount,grade,store_id FROM '.$this->table.' WHERE phone=?';
+        $query=$this->db->query($sql,$mobile);
+        $result = $query->row_array();
+        $this->logmessage(json_encode($result));
+        return $result;
+    }
+
+    protected function logmessage($message,$out = 0){
+        $file = "/tmp/logmessage".date("Y-m-d").'.log';
+        file_put_contents($file,$message.date("Y-m-d H:i:s")."\n",FILE_APPEND);
+        if($out == 1) exit;
+    }
+
+}
